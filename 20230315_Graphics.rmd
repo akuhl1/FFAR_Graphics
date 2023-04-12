@@ -152,10 +152,10 @@ p1
 * There seems to be an issue with MI-AD_9_1 on Port 1 that is resolved at the time of the Port switch on that logger (z6-18277) on 8/15/22 but that switch moved the sensor on Port 3 to Port 5 - although the issue was actually with Port 1 it was still resolved by the switch. Perhaps it was merely loose?
 
 ```{r troubleshoot MI AD, echo = FALSE, warning = FALSE}
-t1 <- as_datetime("2022-07-01 01:00:00")
-t2 <- as_datetime("2022-11-04 01:00:00")
+t1 <- as_datetime("2022-07-1 01:00:00")
+t2 <- as_datetime("2022-11-03 01:00:00")
 
-p2 <- ggplot() + geom_line(data = zentra_WC[zentra_WC$Site == "MI" & zentra_WC$Treatment == "AD",], 
+p2 <- ggplot() + geom_line(data = zentra_WC[zentra_WC$Site == "MI" & zentra_WC$Treatment == "PR",], 
       aes(x = datetimeUTC, y = value, color = as.factor(Port)), 
       linewidth = 1, show.legend = FALSE) +
       theme_bw(base_size = 16) +
@@ -167,10 +167,18 @@ p2
 
 * Replot without the noisy data
 
-```{r plot water content all minus noisy set, echo = FALSE, warning = FALSE}
-t1 <- as_datetime("2022-07-01 01:00:00")
-t2 <- as_datetime("2022-11-04 01:00:00")
+```{r plot water content all minus noisy sets, echo = FALSE, warning = FALSE}
+t1 <- as_datetime("2022-07-12 01:00:00")
+t2 <- as_datetime("2022-07-18 01:00:00")
 zentra_WC_clean <- zentra_WC[!(zentra_WC$Name == "MI-AD_9_1" & zentra_WC$datetime < as_datetime("2022-8-15 19:00:00")), ]
+zentra_WC_clean <- zentra_WC_clean[!(zentra_WC_clean$Name == "MI-PR_9_9" & zentra_WC_clean$Port == 3 &
+                   zentra_WC_clean$datetime < as_datetime("2022-8-5 00:00:00") &
+                   zentra_WC_clean$datetime > as_datetime("2022-7-28 00:00:00")), ]
+zentra_WC_clean <- zentra_WC_clean[!(zentra_WC_clean$Name == "MI-PR_8_11" & zentra_WC_clean$Port == 3 &
+                   zentra_WC_clean$datetime < as_datetime("2022-7-16 18:00:00") &
+                   zentra_WC_clean$datetime > as_datetime("2022-7-16 12:00:00")), ]
+
+
 p3 <- ggplot() + geom_line(data = zentra_WC_clean,
       aes(x = datetimeUTC, y = value, group = interaction(Name,Port), color = as.factor(Port)),
       linewidth = 1, show.legend = FALSE) +
@@ -180,6 +188,22 @@ p3 <- ggplot() + geom_line(data = zentra_WC_clean,
       xlim(c(t1, t2)) + ylim(c(0, 0.5)) + facet_grid(Treatment ~ factor(Site, levels = c("MI", "CR", "RR", "WY")))
 p3
 ```
+
+Do some summary statistics and average each logger through time for each site/treatment pair
+
+```{r plot site/treatment average water content}
+zentra_WC_clean$day <- date(zentra_WC_clean$datetimeUTC)
+zentra_WC_average <- zentra_WC_clean %>% group_by(Site, Treatment, Port, day) %>% summarise(avg_WC = mean(value))
+p4 <- ggplot() + geom_line(data = zentra_WC_average,
+      aes(x = day, y = avg_WC, group = as.factor(Port), color = as.factor(Port)),
+      linewidth = 1, show.legend = FALSE) +
+      theme_bw(base_size = 16) +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+      xlab("Date") + ylab("Water Content (cm^3/cm^3)") +
+      ylim(c(0.05, 0.3)) + facet_grid(Treatment ~ factor(Site, levels = c("MI", "CR", "RR", "WY")))
+p4
+```
+
 
 Look at one Logger from a selection of Site/Treatment pairs
 
@@ -226,13 +250,13 @@ Plot data grouped by treatment
 ```{r plot all water level data, echo = FALSE, warning = FALSE}
 t1 <- as_datetime("2022-07-01 01:00:00")
 t2 <- as_datetime("2023-03-03 01:00:00")
-p2 <- ggplot() + geom_line(data = zentra_WL, 
+p2 <- ggplot() + geom_point(data = zentra_WL, 
       aes(x = datetimeUTC, y = value/1000, group = Name, color = Name), 
-      linewidth = 1, show.legend = TRUE) +
+      alpha = 0.6, size = 1, show.legend = FALSE) +
       theme_bw(base_size = 16) +
       theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
       xlab("Date") + ylab("Water Level (m)") + 
-      xlim(c(t1, t2)) + ylim(c(0, 1.5)) + facet_grid(Treatment ~ Block) #+
+      xlim(c(t1, t2)) + ylim(c(-0.1, 1.5)) + facet_grid(Treatment ~ Block) #+
       # geom_col(data = MAWN_dat, aes(x = datetime, y = pcpn/10), width = 1, col = "lightblue") 
 
 p2

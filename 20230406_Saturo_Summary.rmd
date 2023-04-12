@@ -1,0 +1,359 @@
+---
+title: "Saturo Data Summary"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warnings = FALSE)
+```
+
+```{r Load Libraries, echo = FALSE, warning = FALSE}
+library(ggplot2)
+library(reshape2)
+library(dplyr)
+library(lubridate)
+library(ggpubr)
+library(tidytext)
+library(readxl)
+```
+
+### Introduction
+This is a notebook to begin to investigate the raw saturo data for the FFAR project
+
+### Data
+Load all of the spreadsheet information 
+
+```{r Load Raw Saturo Files, echo=FALSE, warning = FALSE}
+path2dir <- "C:\\Users\\kuhlalex\\OneDrive - Michigan State University\\Water Cycling Indicators\\Data\\Infiltration Data\\"
+folders <- dir(path2dir)
+folders <- subset(folders, grepl("Raw", folders))
+
+folder <- folders[1]
+file <- dir(paste0(path2dir, folder))[1]
+sat_dat <- list()
+
+for (folder in folders){
+     for (file in dir(paste0(path2dir, folder))){
+          path2file <- paste0(path2dir, folder, "\\", file)
+          season <- strsplit(folder, "[ |-]")[[1]][7]
+          name <- paste0(file, "-", season)
+          sat_dat[[name]]  <- as.data.frame(read_excel(path = path2file, sheet = "Raw Data"))
+          sat_dat[[name]]$season <- season
+          sat_dat[[name]]$FileName <- file
+          if (!is.na(match("Flux (cm/s)", colnames(sat_dat[[name]])))){
+               sat_dat[[name]][,"Flux (cm/hr)"] <- sat_dat[[name]][,"Flux (cm/s)"]*3600 # convert cm/s to cm/hr
+          }
+          if (!is.na(match("Volume (mL/s)", colnames(sat_dat[[name]])))){
+               sat_dat[[name]][,"Volume (mL/hr)"] <- sat_dat[[name]][,"Volume (mL/s)"]*3600 # convert cm/s to cm/hr
+          }
+
+          summary_dat  <- as.data.frame(read_excel(path = path2file, sheet = "Summary"))
+          sat_dat[[name]]$Kfs <- as.numeric(summary_dat[21, 2])
+          sat_dat[[name]]$KfsErr <- as.numeric(summary_dat[22, 2])
+          if (!is.na(match("Kfs (cm/s)", summary_dat[21, 1]))){
+               sat_dat[[name]]$Kfs <- sat_dat[[name]]$Kfs*3600 # convert cm/s to cm/hr
+               sat_dat[[name]]$KfsErr <- sat_dat[[name]]$KfsErr*3600 # convert cm/s to cm/hr
+          }
+     }
+}
+
+sat_dat_melt <- melt(sat_dat, id.vars = c("season", "FileName", "Time (min)", "Water Level (cm)", "Pressure (cm)", "Flux (cm/hr)", "Volume (mL/hr)", "Kfs", "KfsErr"))
+```
+
+
+Next, parse the "Site" column into Treatment, Block, and Triangle columns
+```{r parse Saturo data columns, echo = FALSE, warning = FALSE}
+sat_dat_melt$FileName <- gsub("^22-", "", sat_dat_melt$FileName) # append MI site ID to these sites
+sat_dat_melt$FileName <- gsub("^OK-", "", sat_dat_melt$FileName) # append MI site ID to these sites
+
+sat_dat_melt$Site <- sapply(strsplit(sat_dat_melt$FileName, "[_|-]"), "[[", 1)
+sat_dat_melt$Treatment <- sapply(strsplit(sat_dat_melt$FileName, "[_|-]"), "[[", 2)
+sat_dat_melt$Block <- sapply(strsplit(sat_dat_melt$FileName, "[_|-]"), "[[", 3)
+
+# if site was WY you need to flip the treatment and block labels
+bl_tmp <- sat_dat_melt[sat_dat_melt$Site == "WY", "Block"]
+sat_dat_melt[sat_dat_melt$Site == "WY", "Block"] <- sat_dat_melt[sat_dat_melt$Site == "WY", "Treatment"]
+sat_dat_melt[sat_dat_melt$Site == "WY", "Treatment"] <- bl_tmp
+
+sat_dat_melt$Triangle <- sapply(strsplit(sat_dat_melt$FileName, "[ |.|(|)|_|-]"), "[[", 4)
+sat_dat_melt$Bl_Tri <- paste0(sat_dat_melt$Block, "_", sat_dat_melt$Triangle)
+```
+
+```{r view dataframe}
+head(sat_dat_melt)
+```
+
+Then remove known bad stretches of data due to sensor failure 
+
+```{r Clean up bad data stretches, warning = FALSE}
+# wc_dat <- subset(wc_dat, !(Name == "WY_AD-11-12" & Port == 2))
+# wc_dat <- wc_dat[!(wc_dat$Name == "MI-AD_9_1" & wc_dat$datetimeUTC < as_datetime("2022-8-15 19:00:00")), ]
+# wc_dat <- wc_dat[!(wc_dat$Name == "MI-PR_9_9" & wc_dat$Port == 3 &
+#                    wc_dat$datetimeUTC < as_datetime("2022-8-5 00:00:00") &
+#                    wc_dat$datetimeUTC > as_datetime("2022-7-28 00:00:00")), ]
+# wc_dat <- wc_dat[!(wc_dat$Name == "MI-PR_8_11" & wc_dat$Port == 3 &
+#                    wc_dat$datetimeUTC < as_datetime("2022-7-16 18:00:00") &
+#                    wc_dat$datetimeUTC > as_datetime("2022-7-16 12:00:00")), ]
+# wc_dat <- wc_dat[!(wc_dat$Name == "RR_PR_4_7" & wc_dat$Port == 3 &
+#                    wc_dat$datetimeUTC < as_datetime("2022-10-05 11:00:00") &
+#                    wc_dat$datetimeUTC > as_datetime("2022-8-24 02:00:00")), ]
+# wc_dat <- wc_dat[!(wc_dat$Name == "RR_PR_4_7" & wc_dat$Port == 3 &
+#                    wc_dat$datetimeUTC < as_datetime("2022-12-07 13:00:00") &
+#                    wc_dat$datetimeUTC > as_datetime("2022-11-04 12:00:00")), ]
+```
+
+```{r Make some  plotting functions, echo = FALSE}
+get_flux_plot <- function(dat, tr){
+      p1 <- ggplot() + geom_point(data = dat,
+          aes(x = `Time (min)`, y = `Flux (cm/hr)`, group = as.factor(season), color = as.factor(season)),
+          size = 1, show.legend = FALSE) +
+          theme_bw(base_size = 16) + ggtitle(paste0(dat$Site[1], " - ", tr), subtitle = paste0("Block ", dat$Block[1])) +
+          theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+          xlab("Time (min)") + ylab("Flux (cm/hr)") +
+          facet_wrap(FileName ~ Triangle, ncol = 3, scale = "free_y")
+      return(p1)
+      }
+
+
+get_pressure_plot <- function(dat, tr){
+      p1 <- ggplot() + geom_point(data = dat,
+          aes(x = `Time (min)`, y = `Pressure (cm)`, group = as.factor(season), color = as.factor(season)),
+          size = 1, show.legend = FALSE) +
+          theme_bw(base_size = 16) + ggtitle(paste0(dat$Site[1], " - ", tr), subtitle = paste0("Block ", dat$Block[1])) +
+          theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+          xlab("Time (min)") + ylab("Pressure (cm)") +
+          facet_wrap(FileName ~ Triangle, ncol = 3, scale = "free_y")
+      return(p1)
+      }
+
+get_KFS_plot <- function(dat, tr){
+      p1 <- ggplot() + geom_point(data = dat,
+          aes(x = `Time (min)`, y = `Flux (cm/hr)`/`Pressure (cm)`, group = as.factor(season), color = as.factor(season)),
+          size = 1, show.legend = FALSE) +
+          geom_hline(data = dat, aes(yintercept = Kfs, color = as.factor(season)), linewidth = 1, alpha = 0.4, show.legend = FALSE) + 
+          theme_bw(base_size = 16) + ggtitle(paste0(dat$Site[1], " - ", tr), subtitle = paste0("Block ", dat$Block[1])) +
+          theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+          xlab("Time (min)") + ylab("Flux/Pressure") +
+          facet_wrap(FileName ~ Triangle, ncol = 3, scale = "free_y")
+      return(p1)
+      }
+# get_wc_d_plot <- function(dat, t1, t2){
+#      p3 <- ggplot() + geom_point(data = dat, aes(x = datetimeUTC, y = value, color = Name), size = 1) +
+#      geom_line(data = dat, aes(x = datetimeUTC, y = sp_avg_value), color = 'black', linewidth = 2, show.legend = FALSE) +
+#      theme_bw(base_size = 16) + ggtitle(dat$Site[1]) +
+#      theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom") +
+#      xlab("Date") + ylab("Water Content (cm^3/cm^3)") +
+#      xlim(c(t1, t2)) + facet_grid(FileName ~ Block)
+#      return(p3)
+# }
+
+
+# get_wc_mrd_plot <- function(dat, dat_mean, t1, t2){
+#     p4 <-ggplot() + geom_point(data = dat, aes(x = datetimeUTC, y = rd, color = Name), size = 1) +
+#      geom_hline(data = dat_mean, aes(yintercept = avg_rd, color = Name), linewidth = 1, alpha = 0.4) +
+#      geom_hline(yintercept = 0, color = "Black", linewidth = 2) +
+#      theme_bw(base_size = 16) + ggtitle(dat$Site[1]) +
+#      theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom") +
+#      xlab("Date") + ylab("Relative Difference in Water Content (cm^3/cm^3)") +
+#      xlim(c(t1, t2)) +
+#      facet_grid(Port ~ Treatment)
+#      return(p4)
+# }
+
+# get_mrd_bar_plot <- function(dat){
+#      p2 <- ggplot(data = dat,
+#           aes(x = Bl_Tri, y = avg_rd, fill = as.factor(Name))) +
+#           geom_bar(position = "dodge", stat = "identity", show.legend = FALSE) +
+#           theme_bw(base_size = 16) + ggtitle(dat$Site[1]) +
+#           theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+#           xlab("Site") + ylab("Mean Relative Difference in Water Content") +
+#           facet_wrap(Port ~ Treatment, nrow = 3, scale = "free_x")
+#           scale_fill_discrete(name = "Triangle")
+#      return(p2)
+# }
+
+# get_mrd_bar_plot2 <- function(dat){
+#      p2 <- ggplot(data = dat,
+#           aes(reorder_within(Bl_Tri, avg_rd, list(Port,Treatment)), avg_rd, fill = as.factor(Name))) +
+#           geom_bar(position = "dodge", stat = "identity", show.legend = FALSE) +
+#           theme_bw(base_size = 16) + ggtitle(dat$Site[1]) +
+#           theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+#           xlab("Site") + ylab("Mean Relative Difference in Water Content") +
+#           scale_x_reordered() +
+#           facet_wrap(Port ~ Treatment, nrow = 3, scale = "free_x")
+#      return(p2)
+# }
+
+# get_sd_bar_plot <- function(dat){
+#      p2 <- ggplot(data = dat,
+#           aes(x = Bl_Tri, y = sd_rd, fill = as.factor(Name))) +
+#           geom_bar(position = "dodge", stat = "identity", show.legend = FALSE) +
+#           theme_bw(base_size = 16) + ggtitle(dat$Site[1]) +
+#           theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+#           xlab("Site") + ylab("SD Relative Difference in Water Content") +
+#           facet_wrap(Port ~ Treatment, nrow = 3, scale = "free_x")
+#           scale_fill_discrete(name = "Triangle")
+#      return(p2)
+# }
+
+# get_sd_bar_plot2 <- function(dat){
+#      p2 <- ggplot(data = dat,
+#           aes(reorder_within(Bl_Tri, sd_rd, list(Port,Treatment)), sd_rd, fill = as.factor(Name))) +
+#           geom_bar(position = "dodge", stat = "identity", show.legend = FALSE) +
+#           theme_bw(base_size = 16) + ggtitle(dat$Site[1]) +
+#           theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+#           xlab("Site") + ylab("Standard Deviation of Relative Difference in Water Content") +
+#           scale_x_reordered() +
+#           facet_wrap(Port ~ Treatment, nrow = 3, scale = "free_x")
+#      return(p2)
+# }
+```
+
+## Visualize all the Saturo Data for each experiment
+
+### Plot raw flux data (cm/hr)
+
+```{r Plot Flux cm/s data, echo = FALSE, warning = FALSE, fig.width=15,fig.height=10}
+for (site in unique(sat_dat_melt$Site)){
+    for (block in unique(sat_dat_melt$Block[sat_dat_melt$Site == site])){
+            tr <- "AD"
+            dat <- subset(sat_dat_melt, Site == site & Block == block & Treatment == tr)
+            p1 <- get_flux_plot(dat, tr)
+            tr <- "PR"
+            dat <- subset(sat_dat_melt, Site == site & Block == block & Treatment == tr)
+            p2 <- get_flux_plot(dat, tr)
+            p <- ggarrange(p1, p2, ncol = 2)
+            print(p)
+    }
+}
+```
+
+
+### Plot raw pressure data (cm)
+
+```{r Plot Pressure mL/s data, echo = FALSE, warning = FALSE, fig.width=15,fig.height=10}
+for (site in unique(sat_dat_melt$Site)){
+    for (block in unique(sat_dat_melt$Block[sat_dat_melt$Site == site])){
+            tr <- "AD"
+            dat <- subset(sat_dat_melt, Site == site & Block == block & Treatment == tr)
+            p1 <- get_pressure_plot(dat, tr)
+            tr <- "PR"
+            dat <- subset(sat_dat_melt, Site == site & Block == block & Treatment == tr)
+            p2 <- get_pressure_plot(dat, tr)
+            p <- ggarrange(p1, p2, ncol = 2)
+            print(p)
+    }
+}
+```
+
+### Plot raw flux/pressure 
+
+```{r Plot Flux/Pressure data, echo = FALSE, warning = FALSE, fig.width=15,fig.height=10}
+for (site in unique(sat_dat_melt$Site)){
+    for (block in unique(sat_dat_melt$Block[sat_dat_melt$Site == site])){
+            tr <- "AD"
+            dat <- subset(sat_dat_melt, Site == site & Block == block & Treatment == tr)
+            p1 <- get_KFS_plot(dat, tr)
+            tr <- "PR"
+            dat <- subset(sat_dat_melt, Site == site & Block == block & Treatment == tr)
+            p2 <- get_KFS_plot(dat, tr)
+            p <- ggarrange(p1, p2, ncol = 2)
+            print(p)
+    }
+}
+```
+
+## Investigate spatiotemporal stability and persistence 
+
+Calculate the mean water content and the mean relative difference 
+(relative to other sensors at that site and treatment)
+of each sensor
+
+For hourly data:
+
+```{r Calculate the temporal stability with HOURLY data, warning = FALSE}
+# Calculate the mean and standard deviation of each sensor relative to other sensors in that site/treatment pair
+# wc_dat_mean <- wc_dat %>% dplyr::group_by(Name, Site, Treatment, Block, Triangle, Port) %>% 
+#                dplyr::summarize(avg_value = mean(value, na.rm = TRUE), sd_value = sd(value, na.rm = TRUE))
+
+# wc_dat_mrd <- wc_dat %>% dplyr::group_by(Site, Treatment, Port, datetimeUTC) %>% 
+#                dplyr::mutate(sp_avg_value = mean(value, na.rm = TRUE), sp_sd_value = sd(value, na.rm = TRUE))
+
+# wc_dat_mrd$rd <- (wc_dat_mrd$value - wc_dat_mrd$sp_avg_value)/wc_dat_mrd$sp_avg_value
+
+# wc_dat_mrd_mean <- wc_dat_mrd %>% dplyr::group_by(Name, Site, Treatment, Block, Bl_Tri, Triangle, Port) %>% 
+#                dplyr::summarize(avg_rd = mean(rd, na.rm = TRUE), sd_rd = sd(rd, na.rm = TRUE))
+
+```
+
+... and for daily data:
+
+```{r Calculate the temporal stability with DAILY data, warning = FALSE}
+# Reduce to daily data by extracting measurements from the noon hour only and repeat calculation
+# wc_dat_daily <- subset(wc_dat, hour(datetimeUTC) == 12)
+# wc_dat_daily_mean <- wc_dat_daily %>% dplyr::group_by(Name, Site, Treatment, Block, Triangle, Port) %>% 
+#                dplyr::summarize(avg_value = mean(value, na.rm = TRUE), sd_value = sd(value, na.rm = TRUE))
+
+# wc_dat_daily_mrd <- wc_dat_daily %>% dplyr::group_by(Site, Treatment, Port, datetimeUTC) %>% 
+#                dplyr::mutate(sp_avg_value = mean(value, na.rm = TRUE), sp_sd_value = sd(value, na.rm = TRUE))
+
+# wc_dat_daily_mrd$rd <- (wc_dat_daily_mrd$value - wc_dat_daily_mrd$sp_avg_value)/wc_dat_daily_mrd$sp_avg_value
+
+# wc_dat_daily_mrd_mean <- wc_dat_daily_mrd %>% dplyr::group_by(Name, Site, Treatment, Block, Bl_Tri, Triangle, Port) %>% 
+#                dplyr::summarize(avg_rd = mean(rd, na.rm = TRUE), sd_rd = sd(rd, na.rm = TRUE))
+
+```
+
+### Water Content through time 
+Grouped for each site/treatment pair with spatially averaged water content in black
+
+```{r plot difference wc, warning = FALSE, echo = FALSE, fig.width=15,fig.height=10}
+# t1 <- as_datetime("2022-07-01 00:00:00")
+# t2 <- as_datetime("2023-4-6 00:00:00")
+
+# for (site in unique(wc_dat$Site)){
+#      dat <- subset(wc_dat_daily_mrd, Site == site)
+#      p <- get_wc_d_plot(dat, t1, t2)
+#      print(p)
+#     }
+```
+
+### Relative Difference of Water Content 
+From the spatial average for each site/treatment pair (0 Line in black)
+
+```{r plot mean relative difference wc, warning = FALSE, echo = FALSE, fig.width=15,fig.height=10}
+# t1 <- as_datetime("2022-07-01 00:00:00")
+# t2 <- as_datetime("2023-4-6 00:00:00")
+
+# for (site in unique(wc_dat$Site)){
+#      dat <- subset(wc_dat_daily_mrd, Site == site)
+#      dat_mean <-  subset(wc_dat_daily_mrd_mean, Site == site)
+#      p <- get_wc_mrd_plot(dat, dat_mean, t1, t2)
+#      print(p)
+#     }
+```
+
+
+## Temporal mean & standard deviation of relative difference in water content of each sensor 
+
+### Unranked, ordered by Block 
+```{r Plot temporal stability by site for DAILY data unRanked, warning = FALSE, echo = FALSE, fig.width=15,fig.height=10}
+# for (site in unique(wc_dat_daily_mrd_mean$Site)){
+#      dat <- subset(wc_dat_daily_mrd_mean, Site == site)
+#      p1 <- get_mrd_bar_plot(dat)
+#      p2 <- get_sd_bar_plot(dat)
+#      p <- ggarrange(p1, p2, ncol = 2)
+#      print(p)
+#     }
+```
+
+### Ranked
+```{r Plot temporal stability by site for DAILY data RANKED, warning = FALSE, echo = FALSE, fig.width=15,fig.height=10}
+# for (site in unique(wc_dat_daily_mrd_mean$Site)){
+#      dat <- subset(wc_dat_daily_mrd_mean, Site == site)
+#      p1 <- get_mrd_bar_plot2(dat)
+#      p2 <- get_sd_bar_plot2(dat)
+#      p <- ggarrange(p1, p2, ncol = 2)
+#      print(p)
+#     }
+```
