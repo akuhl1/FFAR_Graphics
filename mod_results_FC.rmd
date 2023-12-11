@@ -1,0 +1,206 @@
+---
+title: "Feature Attribution Experiment"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warnings = FALSE)
+```
+
+## Model Output Summary
+
+```{r Load Libraries, echo = FALSE, warning = FALSE}
+library(ggplot2)
+library(reshape2)
+library(dplyr)
+library(lubridate)
+library(ggpubr)
+library(tidytext)
+library(ggpattern)
+```
+
+```{r load compiled model output, echo = FALSE, warning = FALSE}
+fileFD <- "C:\\Users\\kuhlalex\\Repos\\FFAR_Hydrus\\phydrus\\Feature_contribution\\summary_results_FD.csv"
+fileTH <- "C:\\Users\\kuhlalex\\Repos\\FFAR_Hydrus\\phydrus\\Feature_contribution\\summary_results_TH.csv"
+mod_out <- rbind(read.csv(fileFD),read.csv(fileTH))
+mod_out$Treatment <- sapply(strsplit(mod_out$Site, "[_|-]"), "[[", 2)
+mod_out$Block <- sapply(strsplit(mod_out$Site, "[_|-]"), "[[", 3)
+mod_out$Date <- as.Date('2022-08-01') + mod_out$X
+```
+
+```{r plot time series of PR_7_7, echo = FALSE, warning = FALSE, fig.width=10,fig.height=5}
+# pdf("C:\\Users\\kuhlalex\\OneDrive - Michigan State University\\Documents\\FFAR\\Conferences\\20230611_CUAHSI\\Poster\\Graphics\\PR_9_9TS.pdf", width=7, height=6)
+
+p1 <- ggplot() + geom_line(data = mod_out[mod_out$Site =='MI-PR_7_7',], aes(x= Date, y = mod_best, color = Site), linewidth = 1, show.legend = TRUE) + 
+          geom_point(data = mod_out[mod_out$Site =='MI-PR_7_7',], aes(x = Date, y = obs), color = 'black') + 
+          theme_bw(base_size = 16) + theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+          xlab("2022") + ylab("Water Content") + 
+          facet_grid(Depth~Block) + ggtitle("Figure 1")
+p1
+
+# dev.off()
+```
+
+```{r plot time series of all models, echo = FALSE, warning = FALSE, fig.width=10,fig.height=7}
+# pdf("C:\\Users\\kuhlalex\\OneDrive - Michigan State University\\Documents\\FFAR\\Conferences\\20230611_CUAHSI\\Poster\\Graphics\\PR_9_9TS.pdf", width=7, height=6)
+
+p1 <- ggplot() + geom_line(data = mod_out, aes(x= Date, y = mod_best, color = Site), linewidth = 1, show.legend = FALSE) + 
+          geom_point(data = mod_out, aes(x = Date, y = obs), color = 'black') + 
+          theme_bw(base_size = 16) + theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+          xlab("2022") + ylab("Water Content") + 
+          facet_grid(Depth~Block) + ggtitle("Figure 1")
+p1
+
+# dev.off()
+```
+
+Fig 1. Daily modeled (pink line) and observed (black) soil water content at 15 and 60 cm depth at site AD_7_10 
+```{r plot mod vs obs, echo = FALSE, warning = FALSE, fig.width=10,fig.height=7}
+
+# pdf("C:\\Users\\kuhlalex\\OneDrive - Michigan State University\\Documents\\FFAR\\Conferences\\20230611_CUAHSI\\Poster\\Graphics\\modvsobs1to1.pdf", width=5.5, height=5)
+
+p1 <- ggplot(data = mod_out, aes(x = obs, y = mod_best, group = as.factor(Block))) +
+          geom_point(aes(color = Site, shape = Treatment), size = 3, show.legend = TRUE) +
+         geom_abline(intercept = 0)  +
+         scale_shape_manual(values=c(0,1)) +
+         # scale_size_manual(values=c(2,3,))+
+          theme_bw(base_size = 16) +
+          xlab("Observed") + ylab("Modeled Water Content") + 
+          facet_grid(Depth~Block) + ggtitle("Figure 2")
+p1
+
+# dev.off()
+
+```
+
+Fig 2.  Daily modeled vs observed soil water content for 12 (of 18) triangle location models at 15 and 60 cm depths from Aug-Nov 2022. Note how much higher water content is at site AD_8_4 (green color). 
+
+```{r get RMSE, echo = FALSE, warning = FALSE}
+# avg_rmse <- mod_out %>% dplyr::group_by(Site, Treatment, Block, Depth) %>% 
+#                dplyr::summarize(rmse = mean(RMSE))
+
+# avg_rmse <- mean(unique(mod_out$RMSE[mod_out$Depth == 60]))
+```
+
+```{r load compiled flux output, echo = FALSE, warning = FALSE}
+fileFD <- "C:\\Users\\kuhlalex\\Repos\\FFAR_Hydrus\\phydrus\\Feature_contribution\\flux_results_FD.csv"
+fileTH <- "C:\\Users\\kuhlalex\\Repos\\FFAR_Hydrus\\phydrus\\Feature_contribution\\flux_results_TH.csv"
+fileSF <- "C:\\Users\\kuhlalex\\Repos\\FFAR_Hydrus\\phydrus\\Feature_contribution\\flux_results_SF.csv"
+fileGF <- "C:\\Users\\kuhlalex\\Repos\\FFAR_Hydrus\\phydrus\\Feature_contribution\\flux_results_VF.csv"
+fileWF <- "C:\\Users\\kuhlalex\\Repos\\FFAR_Hydrus\\phydrus\\Feature_contribution\\flux_results_WF.csv"
+fileBL <- "C:\\Users\\kuhlalex\\Repos\\FFAR_Hydrus\\phydrus\\Feature_contribution\\flux_results_baseline.csv"
+
+flux_out <- rbind(read.csv(fileGF), read.csv(fileSF), read.csv(fileWF), read.csv(fileTH), read.csv(fileFD), read.csv(fileBL))
+flux_out$Treatment <- sapply(strsplit(flux_out$Site, "[_|-]"), "[[", 2)
+flux_out$Triangle <- sapply(strsplit(flux_out$Site, "[_|-]"), "[[", 4)
+flux_out$Block <- sapply(strsplit(flux_out$Site, "[_|-]"), "[[", 3)
+flux_out$Date <- as.Date('2022-05-08') + flux_out$Time
+
+flux_out <- flux_out %>% dplyr::group_by(Site, Treatment, Triangle, Factor) %>% 
+            dplyr::mutate(daily_T = c(0,diff(sum.vRoot.)), daily_E =c(0,diff(sum.Evap.)) )
+
+t1 <- as.Date('2022-8-1')
+t2 <- as.Date('2022-11-30')
+```
+
+```{r model time series of net ET data for Aug-Nov, echo = FALSE, warning = FALSE,fig.width=10,fig.height=4}
+t1 <- as.Date('2022-8-01')
+t2 <- as.Date('2022-10-01')
+flux_out  <- flux_out %>% dplyr::group_by(Site, Treatment, Triangle, Factor) %>% 
+               dplyr::mutate(ET2 = ET - ET[Date == as.Date('2022-07-31')])
+
+p1 <- ggplot() + geom_line(data = flux_out[flux_out$Factor == 'all',], aes(x= Date, y = ET2, group = Site, color = Site), linewidth = 1, show.legend = TRUE) + 
+          theme_bw(base_size = 16) + theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+          xlab("2022") + ylab("Cumulative Evapotranspiration (cm)") +
+           xlim(c(t1,t2)) + ylim(c(0,20)) + ggtitle("Figure 3")
+p1
+
+```
+
+Fig 3. Cumulative daily ET from Aug-Nov 2022 for all 7 triangle models.
+```{r get deviation in Aug/Sept ET from avg, echo = FALSE, warning = FALSE,fig.width=10,fig.height=4}
+# subtract E and T on Oct 1 from E and T on Aug 1 to get total Aug/Sept ET
+AugSep_ET  <- flux_out %>% dplyr::group_by(Site, Treatment, Triangle, Factor) %>% 
+               dplyr::summarize(net_E = sum.Evap.[Date == as.Date('2022-10-1')] - sum.Evap.[Date == as.Date('2022-8-1')], 
+               net_T = sum.vRoot.[Date == as.Date('2022-10-1')] - sum.vRoot.[Date == as.Date('2022-8-1')],
+                avg_dailyT = mean(daily_T), avg_dailyE = mean(daily_E))
+
+# avg_netET <- mean(AugSep_ET$net_E[AugSep_ET$Scenario == 'best' & AugSep_ET$Exp == 'GF'] +
+#         AugSep_ET$net_T[AugSep_ET$Scenario == 'best' & AugSep_ET$Exp == 'GF'])
+# avg_netE <- mean(AugSep_ET$net_E[AugSep_ET$Scenario == 'best' & AugSep_ET$Exp == 'GF'])
+# avg_netT <- mean(AugSep_ET$net_T[AugSep_ET$Scenario == 'best' & AugSep_ET$Exp == 'GF'])
+
+# avg_dailyET <- mean(AugSep_ET$avg_dailyE[AugSep_ET$Scenario == 'best' & AugSep_ET$Exp == 'GF'] +
+#         AugSep_ET$avg_dailyT[AugSep_ET$Scenario == 'best' & AugSep_ET$Exp == 'GF'])
+# avg_dailyE <- mean(AugSep_ET$avg_dailyE[AugSep_ET$Scenario == 'best' & AugSep_ET$Exp == 'GF'])
+# avg_dailyT <- mean(AugSep_ET$avg_dailyT[AugSep_ET$Scenario == 'best' & AugSep_ET$Exp == 'GF'])
+
+
+# subtract all scenarios from the scenario of baseline params and avg_LAI at site PR_7_12
+AugSep_ET$devE <- AugSep_ET$net_E - AugSep_ET$net_E[AugSep_ET$Factor == 'baseline']
+AugSep_ET$devT <- AugSep_ET$net_T - AugSep_ET$net_T[AugSep_ET$Factor == 'baseline']
+AugSep_ET$devET <- (AugSep_ET$net_T + AugSep_ET$net_E) - (AugSep_ET$net_T[AugSep_ET$Factor == 'baseline'] + AugSep_ET$net_E[AugSep_ET$Factor == 'baseline'])
+
+
+# subtract all scenarios from an average ET instead
+# AugSep_ET$devE <- AugSep_ET$net_E - mean(AugSep_ET$net_E[AugSep_ET$Factor == 'all'])
+# AugSep_ET$devT <- AugSep_ET$net_T - mean(AugSep_ET$net_T[AugSep_ET$Factor == 'all'])
+# AugSep_ET$devET <- (AugSep_ET$net_T + AugSep_ET$net_E) - mean(AugSep_ET$net_T[AugSep_ET$Factor == 'all'] + AugSep_ET$net_E[AugSep_ET$Factor == 'all'])
+
+
+# AugSep_ETmelt <- melt(AugSep_ET, id = c('Site','Treatment','Triangle','Exp','Scenario','net_E','net_T'))
+
+# subtract all scenarios from the average of 'best' ET values
+# AugSep_ET$devE <- AugSep_ET$net_E - avg_E
+# AugSep_ET$devT <- AugSep_ET$net_T - avg_T
+# AugSep_ET$devET <- (AugSep_ET$net_T + AugSep_ET$net_E) - avg_ET
+```
+
+
+```{r make ranked boxplots of deviation in total ET, echo = FALSE, warning = FALSE,fig.width=7,fig.height=6}
+
+b1 <- ggplot(data = AugSep_ET[AugSep_ET$Factor == 'VF' | AugSep_ET$Factor == 'SF' | AugSep_ET$Factor == 'WF', ],
+           aes(reorder(Site,devET), devET)) +
+           geom_bar(position = "stack", stat = "identity", show.legend = FALSE) +
+           geom_col_pattern(aes(pattern = Factor, fill = Factor), # <- make this an interaction
+          #  colour = "black",
+           pattern_fill = "black",
+           pattern_angle = 45,
+           pattern_density = 0.02,
+           pattern_spacing = 0.02) +
+           scale_pattern_manual(values=c('circle','crosshatch', 'stripe')) +
+           geom_point(AugSep_ET[AugSep_ET$Factor == 'all',], mapping = aes(reorder(Site,devET), devET), size = 5, stroke  = 2, shape = 8) +
+           theme_bw(base_size = 14) +
+           theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+           xlab("Site") + ylab("Difference in Evapotranspiration (cm)") +
+           scale_x_reordered()  + ggtitle("Figure 4")
+b1
+```
+
+Fig. 4 Deviation in modeled net ET from the months of Aug and Sept 2022 compared to a ‘baseline’ model. The baseline model was run using an average LAI, the soil texture from PR_7_12 and a free drainage boundary condition. Star symbols indicate the modeled difference in ET of the combined site-specific soil, LAI, and water table depth (where present) at each triangle. The stacked colors are individual model scenarios where the triangle-specific soil (soil factor, SF), LAI (grazing factor, GF), and water table (water factor, WF) were modeled independently of each other to attribute how much of the difference in net ET was due to each ‘factor’. Note that some factors have a negative effect compared to the baseline, while others are positive. Site AD_8_4 the only one in this set with a perched water table, which has a significant positive effect on ET due to the increase in soil moisture availability, i.e. a groundwater subsidy. The effect of the three factors working independently do not add up perfectly to the effect of all three combined, but the general net effect is demonstrated. For example, at AD_8_4, the negative GF effect appears to offset the positive SF and WF effects. 
+
+```{r try making the stacked plot of E and T from each factor, echo = FALSE, warning = FALSE,fig.width=10,fig.height=4}
+
+dat <- AugSep_ET[,c('Site','Treatment','Triangle','Factor','devE','devT')]
+dat_melt <- melt(dat, id = c('Site','Treatment','Triangle','Factor'))
+
+b2 <- ggplot(data = dat_melt[dat_melt$Factor == 'VF' | dat_melt$Factor == 'SF' | dat_melt$Factor == 'WF', ],
+           aes(reorder(Site,Treatment), value)) +
+           geom_bar(position = "stack", stat = "identity", show.legend = FALSE) +
+           geom_col_pattern(aes(pattern = variable, fill = Factor), # <- make this an interaction
+          #  colour = "black",
+           pattern_fill = "black",
+           pattern_angle = 45,
+           pattern_density = 0.02,
+           pattern_spacing = 0.02) +
+           scale_pattern_manual(values=c('circle','crosshatch', 'stripe')) +
+           geom_point(AugSep_ET[AugSep_ET$Factor == 'all',], mapping = aes(reorder(Site,devET), devET), size = 5, stroke = 2, shape = 8) +
+           theme_bw(base_size = 16) +
+          theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+          xlab("Site") + ylab("Difference in E and T (cm)") +
+          scale_x_reordered() + ggtitle("Figure 5")
+b2
+
+```
+
+Fig. 5 Breakdown of deviation in total ET into the evaporation (pink) and transpiration (blue) components from the months of Aug and Sept 2022 compared to a ‘baseline’ model. Note the grazing and soil factors have inverse effects on evaporation and transpiration, i.e. a greater LAI than baseline at the Adaptive sites results in positive deviation in T but a negative deviation in E and vice versa at the Prescriptive sites

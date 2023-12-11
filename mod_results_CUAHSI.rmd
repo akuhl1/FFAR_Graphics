@@ -1,0 +1,191 @@
+---
+title: "CUAHSI Model summary"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warnings = FALSE)
+```
+
+```{r Load Libraries, echo = FALSE, warning = FALSE}
+library(ggplot2)
+library(reshape2)
+library(dplyr)
+library(lubridate)
+library(ggpubr)
+library(tidytext)
+```
+
+```{r load compiled model output}
+file <- "C:\\Users\\kuhlalex\\Repos\\FFAR_Hydrus\\phydrus\\cuahsi\\summary_results.csv"
+mod_out <- read.csv(file)
+mod_out$Treatment <- sapply(strsplit(mod_out$Site, "[_|-]"), "[[", 2)
+mod_out$Block <- sapply(strsplit(mod_out$Site, "[_|-]"), "[[", 3)
+mod_out$Date <- as.Date('2022-08-01') + mod_out$X
+```
+
+```{r plot time series of PR_7_7}
+pdf("C:\\Users\\kuhlalex\\OneDrive - Michigan State University\\Documents\\FFAR\\Conferences\\20230611_CUAHSI\\Poster\\Graphics\\PR_9_9TS.pdf", width=7, height=6)
+
+p1 <- ggplot() + geom_line(data = mod_out[mod_out$Site == 'MI-PR_9_9',], aes(x= Date, y = mod_best, color = as.factor(Block)), linewidth = 1, show.legend = FALSE) + 
+          geom_point(data = mod_out[mod_out$Site =='MI-PR_9_9',], aes(x = Date, y = obs), color = 'black') + 
+          theme_bw(base_size = 16) + theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+          xlab("2022") + ylab("Water Content") + facet_wrap(~Depth, nrow = 2 )
+p1
+
+dev.off()
+```
+
+```{r plot mod vs obs}
+
+pdf("C:\\Users\\kuhlalex\\OneDrive - Michigan State University\\Documents\\FFAR\\Conferences\\20230611_CUAHSI\\Poster\\Graphics\\modvsobs1to1.pdf", width=5.5, height=5)
+
+p1 <- ggplot(data = mod_out[mod_out$Depth ==15,], aes(x = obs, y = mod_best, group = as.factor(Block))) +
+          geom_point(aes(color = as.factor(Block), shape = as.factor(Treatment)), size = 3, show.legend = FALSE) +
+         geom_abline(intercept = 0)  +
+         scale_shape_manual(values=c(0,1)) +
+         # scale_size_manual(values=c(2,3,))+
+          theme_bw(base_size = 16) +
+          xlab("Observed") + ylab("Modeled Water Content") 
+p1
+
+dev.off()
+
+```
+
+```{r get RMSE}
+avg_rmse <- mod_out %>% dplyr::group_by(Site, Treatment, Block, Depth) %>% 
+               dplyr::summarize(rmse = mean(RMSE))
+
+avg_rmse <- mean(unique(mod_out$RMSE[mod_out$Depth == 60]))
+```
+
+```{r load compiled flux output}
+file <- "C:\\Users\\kuhlalex\\Repos\\FFAR_Hydrus\\phydrus\\cuahsi\\flux_results.csv"
+flux_out <- read.csv(file)
+flux_out$Treatment <- sapply(strsplit(mod_out$Site, "[_|-]"), "[[", 2)
+flux_out$Block <- sapply(strsplit(mod_out$Site, "[_|-]"), "[[", 3)
+flux_out$Date <- as.Date('2022-05-08') + mod_out$Time
+t1 <- as.Date('2022-8-1')
+t2 <- as.Date('2022-11-30')
+```
+
+```{r plot time series of recharge}
+pdf("C:\\Users\\kuhlalex\\OneDrive - Michigan State University\\Documents\\FFAR\\Conferences\\20230611_CUAHSI\\Poster\\Graphics\\recharge.pdf", width=5.5, height=5)
+t1 <- as.Date('2022-8-1')
+t2 <- as.Date('2022-11-30')
+p1 <- ggplot() + geom_line(data = flux_out, aes(x= Date, y = Recharge, group = interaction(Treatment,Block), color = interaction(Treatment,Block)), linewidth = 1, show.legend = FALSE) + 
+          theme_bw(base_size = 16) + theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+          xlab("2022") + ylab("Cumulative Recharge (cm)") +
+          xlim(c(t1,t2)) + ylim(c(-15,7))
+p1
+
+dev.off()
+```
+
+
+```{r plot time series of transpiration}
+pdf("C:\\Users\\kuhlalex\\OneDrive - Michigan State University\\Documents\\FFAR\\Conferences\\20230611_CUAHSI\\Poster\\Graphics\\ET.pdf", width=5.5, height=5)
+t1 <- as.Date('2022-5-10')
+t2 <- as.Date('2022-10-15')
+p1 <- ggplot() + geom_line(data = flux_out, aes(x= Date, y = sum.vRoot.+sum.Evap., group = interaction(Treatment,Block), color = interaction(Treatment,Block)), linewidth = 1, show.legend = TRUE) + 
+          theme_bw(base_size = 16) + theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+          xlab("2022") + ylab("Cumulative Evapotranspiration (cm)") +
+           xlim(c(t1,t2)) #+ ylim(c(-15,7))
+p1
+
+dev.off()
+```
+
+```{r plot time series of runoff}
+# pdf("C:\\Users\\kuhlalex\\OneDrive - Michigan State University\\Documents\\FFAR\\Conferences\\20230611_CUAHSI\\Poster\\Graphics\\ET.pdf", width=5.5, height=5)
+t1 <- as.Date('2022-5-10')
+t2 <- as.Date('2022-10-15')
+p1 <- ggplot() + geom_line(data = flux_out, aes(x= Date, y = sum.RunOff., group = interaction(Treatment,Block), color = interaction(Treatment,Block)), linewidth = 1, show.legend = TRUE) + 
+          theme_bw(base_size = 16) + theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+          xlab("2022") + ylab("Cumulative runoff (cm)") +
+           xlim(c(t1,t2)) #+ ylim(c(-15,7))
+p1
+
+# dev.off()
+```
+```{r get net recharge}
+net_flux <- flux_out %>% dplyr::group_by(Site, Treatment, Block) %>% 
+               dplyr::summarize(net_R = Recharge[Date == max(Date)], net_ET = sum.vRoot.[Date == max(Date)]+sum.Evap.[Date == max(Date)])
+
+
+```
+
+```{r make ranked bar plots by mean difference in R}
+mrd_flux <- net_flux
+mrd_flux$mrdET <- (mrd_flux$net_ET - mean(mrd_flux$net_ET))/mean(mrd_flux$net_ET)
+mrd_flux$mrdR <- (mrd_flux$net_R - mean(mrd_flux$net_R))/mean(mrd_flux$net_R)
+mrd_flux$Name <- mrd_flux$Site
+all_mrd <- merge(wc_mrd,mrd_flux,by = "Name")
+
+pdf("C:\\Users\\kuhlalex\\OneDrive - Michigan State University\\Documents\\FFAR\\Conferences\\20230611_CUAHSI\\Poster\\Graphics\\rank_R.pdf", width=7, height=3)
+
+p2 <- ggplot(data = all_mrd,
+           aes(reorder_within(Bl_Tri,avg_rd,list(Treatment.x)), mrdR)) +
+           geom_bar(position = "dodge", stat = "identity", show.legend = FALSE) +
+           geom_col_pattern(aes(pattern = Treatment.x, fill = Block.x), # <- make this an interaction
+          #  colour = "black",
+           pattern_fill = "black",
+           pattern_angle = 0,
+           pattern_density = 0.02,
+           pattern_spacing = 0.02) +
+           scale_pattern_manual(values=c('crosshatch', 'circle')) +
+           theme_bw(base_size = 16) +
+          theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+          xlab("Site") + ylab("Mean Relative Difference in Bottom Flux (cm)") +
+          scale_x_reordered() 
+p2
+
+dev.off()
+
+```
+```{r make ranked bar plots by mean difference in ET}
+pdf("C:\\Users\\kuhlalex\\OneDrive - Michigan State University\\Documents\\FFAR\\Conferences\\20230611_CUAHSI\\Poster\\Graphics\\rank_ET.pdf", width=7, height=3)
+
+p2 <- ggplot(data = all_mrd,
+           aes(reorder_within(Bl_Tri,avg_rd,list(Treatment.x)), mrdET)) +
+           geom_bar(position = "dodge", stat = "identity", show.legend = FALSE) +
+           geom_col_pattern(aes(pattern = Treatment.x, fill = Block.x), # <- make this an interaction
+          #  colour = "black",
+           pattern_fill = "black",
+           pattern_angle = 0,
+           pattern_density = 0.02,
+           pattern_spacing = 0.02) +
+           scale_pattern_manual(values=c('crosshatch', 'circle')) +
+           theme_bw(base_size = 16) +
+          theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+          xlab("Site") + ylab("Mean Relative Difference in ET (cm)") +
+          scale_x_reordered() 
+p2
+
+dev.off()
+
+```
+
+```{r make ranked bar plots by mean difference in ET}
+pdf("C:\\Users\\kuhlalex\\OneDrive - Michigan State University\\Documents\\FFAR\\Conferences\\20230611_CUAHSI\\Poster\\Graphics\\rmse.pdf", width=7, height=3)
+
+p2 <- ggplot(data = avg_rmse,
+           aes(reorder_within(Site,rmse, list(Treatment)), rmse)) +
+           geom_bar(position = "dodge", stat = "identity", show.legend = FALSE) +
+           geom_col_pattern(aes(pattern = Treatment, fill = Block), # <- make this an interaction
+          #  colour = "black",
+           pattern_fill = "black",
+           pattern_angle = 0,
+           pattern_density = 0.02,
+           pattern_spacing = 0.02) +
+           scale_pattern_manual(values=c('crosshatch', 'circle')) +
+           theme_bw(base_size = 16) +
+          theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+          xlab("Site") + ylab("RMSE") +
+          scale_x_reordered() 
+p2
+
+dev.off()
+
+```

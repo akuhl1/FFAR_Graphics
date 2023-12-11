@@ -1,0 +1,310 @@
+---
+title: "Raw Saturo Data Summary from Producer Sites"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warnings = FALSE)
+```
+
+```{r Load Libraries, echo = FALSE, warning = FALSE}
+library(ggplot2)
+library(reshape2)
+library(dplyr)
+library(lubridate)
+library(ggpubr)
+library(tidytext)
+library(readxl)
+```
+
+### Introduction
+This is a notebook to begin to investigate the raw saturo data for the FFAR project
+
+### Data
+Load all of the spreadsheet information 
+
+```{r Load Raw Saturo Files, echo=FALSE, warning = FALSE}
+path2dir <- "C:\\Users\\kuhlalex\\OneDrive - Michigan State University\\Water Cycling Indicators\\Data\\Infiltration Data\\"
+folders <- dir(path2dir)
+# folders <- subset(folders, grepl("Raw", folders))
+folders <- subset(folders, grepl("Producer", folders))
+folder <- folders[1]
+file <- dir(paste0(path2dir, folder))[1]
+sat_dat <- list()
+
+for (folder in folders){
+     for (file in dir(paste0(path2dir, folder))){
+          path2file <- paste0(path2dir, folder, "\\", file)
+          season <- strsplit(folder, "[ |-]")[[1]][8]
+          name <- file
+          sat_dat[[name]]  <- as.data.frame(read_excel(path = path2file, sheet = "Raw Data"))
+          sat_dat[[name]]$season <- season
+          sat_dat[[name]]$year <- strsplit(folder, "[ |-]")[[1]][7]
+          sat_dat[[name]]$FileName <- file
+          if (!is.na(match("Flux (cm/s)", colnames(sat_dat[[name]])))){
+               sat_dat[[name]][,"Flux (cm/hr)"] <- sat_dat[[name]][,"Flux (cm/s)"]*3600 # convert cm/s to cm/hr
+          }
+          if (!is.na(match("Volume (mL/s)", colnames(sat_dat[[name]])))){
+               sat_dat[[name]][,"Volume (mL/hr)"] <- sat_dat[[name]][,"Volume (mL/s)"]*3600 # convert cm/s to cm/hr
+          }
+
+          summary_dat  <- as.data.frame(read_excel(path = path2file, sheet = "Summary"))
+          sat_dat[[name]]$Serial <- summary_dat[11,2]
+          sat_dat[[name]]$Kfs <- as.numeric(summary_dat[21, 2])
+          sat_dat[[name]]$KfsErr <- as.numeric(summary_dat[22, 2])
+          if (!is.na(match("Kfs (cm/s)", summary_dat[21, 1]))){
+               sat_dat[[name]]$Kfs <- sat_dat[[name]]$Kfs*3600 # convert cm/s to cm/hr
+               sat_dat[[name]]$KfsErr <- sat_dat[[name]]$KfsErr*3600 # convert cm/s to cm/hr
+          }
+     }
+}
+
+sat_dat_melt <- melt(sat_dat, id.vars = c("season", "year", "FileName", "Serial", "Time (min)", "Water Level (cm)", "Pressure (cm)", "Flux (cm/hr)", "Volume (mL/hr)", "Kfs", "KfsErr"))
+```
+
+
+Next, parse the "Site" column into Treatment, Block, and Triangle columns
+```{r parse Saturo data columns, echo = FALSE, warning = FALSE}
+sat_dat_melt$FileName <- gsub(" ", "", sat_dat_melt$FileName) # Drop spaces from filename
+
+sat_dat_melt$Site <- sapply(strsplit(sat_dat_melt$FileName, "[-_().R]"), "[[", 2)
+sat_dat_melt$Producer <- sapply(strsplit(sat_dat_melt$FileName, "[-_().R]"), "[[", 3)
+sat_dat_melt$Triangle <- sapply(strsplit(sat_dat_melt$FileName, "[-_().R]"), "[[", 4)
+
+```
+
+```{r view dataframe}
+head(sat_dat_melt)
+```
+
+Then remove known bad stretches of data due to sensor failure 
+
+```{r Clean up bad data stretches, warning = FALSE}
+# files that were restarts
+sat_dat_melt <- subset(sat_dat_melt, !(FileName == '23-MI-19-7.xlsx'))
+sat_dat_melt <- subset(sat_dat_melt, !(FileName == '23-MI-19-4(1).xlsx'))
+sat_dat_melt <- subset(sat_dat_melt, !(FileName == '23-MI-19-11.xlsx'))
+sat_dat_melt <- subset(sat_dat_melt, !(FileName == '23-MI-19-11-DUP.xlsx'))
+sat_dat_melt <- subset(sat_dat_melt, !(FileName == '23-MI-20-7-DUP.xlsx'))
+
+# files that are suspicious
+# sat_dat_melt <- subset(sat_dat_melt, !(FileName == '23-MI-01-12.xlsx')) # pressure curves are wobbly
+# sat_dat_melt <- subset(sat_dat_melt, !(FileName == '23-MI-05-2(1).xlsx')) # took a while to build pressure, only the last two cycles look good
+
+
+```
+
+```{r Make some  plotting functions, echo = FALSE}
+get_flux_plot <- function(dat){
+      p1 <- ggplot() + geom_line(data = dat,
+          aes(x = `Time (min)`, y = `Flux (cm/hr)`/60, group = FileName, color = FileName),
+          size = 1, show.legend = FALSE) +
+          theme_bw(base_size = 16) + ggtitle(dat$Producer[1]) + 
+          theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+          xlab("Time (min)") + ylab("Flux (cm/min)") +
+          facet_wrap(~Triangle, ncol = 4, scale = "free_y")
+      return(p1)
+      }
+
+
+get_pressure_plot <- function(dat){
+      p1 <- ggplot() + geom_line(data = dat,
+          aes(x = `Time (min)`, y = `Pressure (cm)`, group = FileName, color = FileName),
+          size = 1, show.legend = FALSE) +
+          theme_bw(base_size = 16) + 
+          theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+          xlab("Time (min)") + ylab("Pressure (cm)") +
+          facet_wrap(~Producer, ncol = 4, scale = "free_y")
+      return(p1)
+      }
+
+
+get_fluxvsksat_plot_all <- function(dat){
+      p1 <- ggplot(data = dat,
+          aes(x = Kfs/60, y = avg_flux/60), show.legend = TRUE) + geom_point(aes(color = Producer, shape = Serial), size = 4, stroke = 2) + 
+          scale_shape_manual(values=1:9) + 
+          geom_smooth(method = "lm") + stat_regline_equation(aes(label = paste(..eq.label.., ..rr.label.., sep = "~~~"))) +
+          theme_bw(base_size = 16) + # ggtitle(paste0(dat$Site[1], " - ", tr), subtitle = paste0("Block ", dat$Block[1])) +
+          theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom") +
+          xlab("Ksat (cm/min)") + ylab("avg Flux (cm/min)") 
+      return(p1)
+      }
+
+get_fluxvsksatnew_plot_all <- function(dat){
+      p1 <- ggplot(data = dat,
+          aes(x = Kfs_new/60, y = avg_flux/60), show.legend = TRUE) + geom_point(aes(color = Producer, shape = Serial), size = 4, stroke = 2) + 
+          scale_shape_manual(values=1:9) + 
+          geom_smooth(method = "lm") + stat_regline_equation(aes(label = ..rr.label..)) +
+          theme_bw(base_size = 16) + # ggtitle(paste0(dat$Site[1], " - ", tr), subtitle = paste0("Block ", dat$Block[1])) +
+          theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom") +
+          xlab("Ksat (cm/min)") + ylab("avg Flux (cm/min)") 
+      return(p1)
+      }
+
+get_slopevsksat_plot_all <- function(dat){
+      p1 <- ggplot(data = dat,
+          aes(x = Kfs/60, y = slope_flux/60), show.legend = TRUE) + geom_point(aes(color = Producer, shape = Serial), size = 4, stroke = 2) + 
+          scale_shape_manual(values=1:9) + 
+          geom_smooth(method = "lm") + stat_regline_equation(aes(label = ..rr.label..)) +
+          theme_bw(base_size = 16) + # ggtitle(paste0(dat$Site[1], " - ", tr), subtitle = paste0("Block ", dat$Block[1])) +
+          theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom") +
+          xlab("Ksat (cm/min)") + ylab("slope Flux (cm/min)") 
+      return(p1)
+      }
+
+get_fluxvsksat_plot <- function(dat){
+      p1 <- ggplot(data = dat,
+          aes(x = Kfs/60, y = avg_flux/60, color = Producer),
+          size = 3, show.legend = TRUE) + geom_point() + 
+          geom_smooth(method = "lm") + stat_regline_equation(aes(label = ..rr.label..)) +
+          theme_bw(base_size = 16) + ggtitle('All sites & triangles combined') +
+          theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom") +
+          xlab("Ksat (cm/min)") + ylab("avg Flux (cm/min)") +
+          facet_wrap(~ Producer, ncol = 4, scale = "free")
+      return(p1)
+      }
+
+get_fluxvstime_plot <- function(dat){
+      p1 <- ggplot() + geom_point(data = dat[seq.int(1,dim(dat)[1],3),],
+          aes(x = `Time (min)`, y = cumsum_flux/60, group = Serial, color = Triangle, shape = Serial),
+          size = 2,  stroke = 2, show.legend = TRUE) +
+          scale_shape_manual(values=1:9) + 
+          theme_bw(base_size = 16) +
+          theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom") +
+          xlab("Time (min)") + ylab("Cumulative Flux (cm/min)") +
+          facet_wrap(~Producer, ncol = 4, scale = "free_y")
+      return(p1)
+      }
+
+get_KFS_boxplot <- function(dat){
+    give.n <- function(x){
+    return(c(y = median(x) + 1, label = length(x)))
+    }
+
+    p3 <- ggplot(data = dat, aes(x = reorder(Producer,Kfs,median), y = Kfs/60, fill = Producer)) +
+        geom_boxplot() +
+        # stat_summary(fun.data = give.n, geom = "text") + # to display sample size
+        xlab("Site") + ylab("Saturated K (cm/min)") + ggtitle(dat$Site[1]) +
+        theme_bw(base_size = 16) +
+        theme(axis.text.x=element_text(angle=45,hjust=1)) + scale_fill_discrete(name = "Producer ID")  
+    return(p3)
+    } 
+
+get_KFS_boxplot_byTri <- function(dat){
+    p3 <- ggplot(data = dat, aes(x = reorder_within(Triangle,Kfs,Producer), y = Kfs/60, fill = Producer)) +
+        geom_boxplot(aes(middle = mean(Kfs/60))) +
+        xlab("Site") + ylab("Saturated K (cm/min)") +
+        theme_bw(base_size = 16) +ggtitle(dat$Site[1]) +
+        theme(axis.text.x=element_text(angle=45,hjust=1)) + scale_fill_discrete(name = "Producer ID") +
+        facet_wrap(~Producer, ncol = 2, scale = "free_x")
+    return(p3)
+    } 
+
+```
+
+## Visualize all the Saturo Data for each experiment
+
+### Plot the average flux vs calculated ksat for each producer site seperately and together
+```{r Plot Flux cm/s vs ksat data, echo = FALSE, warning = FALSE, fig.width=15,fig.height=10}
+dat <- sat_dat_melt %>% dplyr::group_by(L1, Serial, Kfs, season, year, Site, Producer, Triangle) %>% 
+               dplyr::summarize(avg_flux = mean(`Flux (cm/hr)`, na.rm = TRUE))
+
+for (site in unique(dat$Site)){
+
+p1 <- get_fluxvsksat_plot(dat[dat$Site == site,])
+print(p1)
+
+p2 <- get_fluxvsksat_plot_all(dat[dat$Site == site,])
+print(p2)
+}
+```
+
+
+```{r get coefficients, echo = FALSE, warning = FALSE, fig.width=15,fig.height=10}
+dat <- sat_dat_melt %>% dplyr::group_by(L1, Serial, Kfs, season, year, Site, Producer, Triangle) %>% 
+               dplyr::summarize(avg_flux = mean(`Flux (cm/hr)`, na.rm = TRUE))
+coef <- lm(dat$Kfs ~ dat$avg_flux)
+```
+
+### Plot cumulative flux vs time starting after 45 minutes of run time for each producer site 
+```{r Plot cumulative Flux cm/s vs time, echo = FALSE, warning = FALSE, fig.width=15,fig.height=10}
+dat <- sat_dat_melt[sat_dat_melt$variable == 'Flux (cm/s)' & sat_dat_melt$`Time (min)` > 45,] %>% dplyr::group_by(L1, Kfs, season, year, Site, Producer, Triangle)  %>% 
+               dplyr::mutate(cumsum_flux = cumsum(`Flux (cm/hr)`), slope_flux = coefficients(lm(cumsum_flux ~ `Time (min)`))[2])
+
+for (site in unique(dat$Site)){
+
+    p1 <- get_fluxvstime_plot(dat[dat$Site == site,])
+    print(p1)
+
+    p2 <- get_slopevsksat_plot_all(dat[dat$Site == site,])
+    print(p2)
+}
+
+dat$Kfs <- dat$slope_flux*0.5 - 0.012
+
+p3 <- get_slopevsksat_plot_all(dat)
+print(p3)
+```
+
+### Plot raw flux data (cm/min)
+
+```{r Plot Flux cm/s data, echo = FALSE, warning = FALSE, fig.width=10,fig.height=7}
+for (site in unique(dat$Site)){
+
+    for (producer in unique(dat$Producer[dat$Site == site])){
+        dat2 <- subset(dat, Producer == producer & Site == site)
+        p <- get_flux_plot(dat2)
+        print(p)
+}
+}
+```
+
+
+### Plot raw pressure data (cm)
+
+```{r Plot Pressure mL/s data, echo = FALSE, warning = FALSE, fig.width=10,fig.height=7}
+for (site in unique(dat$Site)){
+
+    for (producer in unique(dat$Producer[dat$Site == site])){
+        dat2 <- subset(dat, Producer == producer & Site == site)
+        p <- get_pressure_plot(dat2)
+        print(p)
+}
+
+}
+```
+
+### Plot summary box plots 
+```{r Plot box plots of data, echo = FALSE, warning = FALSE, fig.width=15,fig.height=10}
+# dat <- sat_dat_melt %>% dplyr::group_by(L1, Kfs, season, year, Site, Producer, Triangle)  %>% 
+#                dplyr::summarize(avg_ksat = mean(Kfs))
+# for (site in unique(dat$Site)){
+# p1 <- get_KFS_boxplot(dat[dat$Site == site,])
+# print(p1)
+# p2 <- get_KFS_boxplot_byTri(dat[dat$Site == site,])
+# print(p2)
+# }
+```
+
+```{r Plot box plots of data with new ksat, echo = FALSE, warning = FALSE, fig.width=10,fig.height=7}
+dat <- sat_dat_melt[sat_dat_melt$variable == 'Flux (cm/hr)',] %>% dplyr::group_by(L1, Kfs, Site, Producer, Triangle)  %>% 
+               dplyr::mutate(cumsum_flux = cumsum(`Flux (cm/hr)`), slope_flux = coefficients(lm(cumsum_flux ~ `Time (min)`))[2])
+
+dat$Kfs <- dat$slope_flux*0.5 - 0.012
+
+for (site in unique(dat$Site)){
+p1 <- get_KFS_boxplot(dat[dat$Site == site,])
+print(p1)
+}
+
+unique(sat_dat_melt$Site[sat_dat_melt$variable == 'Flux (cm/hr)'])
+```
+
+```{r Plot by triangle, echo = FALSE, warning = FALSE, fig.width=10, fig.height=15}
+for (site in unique(dat$Site)){
+p2 <- get_KFS_boxplot_byTri(dat[dat$Site == site,])
+print(p2)
+}
+```
+
+

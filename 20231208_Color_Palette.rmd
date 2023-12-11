@@ -1,0 +1,31 @@
+---
+title: "Set Colors"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warnings = FALSE)
+```
+
+## Introduction
+This is a notebook to make set the color scheme for working FFAR data
+
+## Set HEX codes
+Broadly Michgan region sites are blue, Wyoming yellow and Oklahoma green
+Coffee Ranch is dark green, Red River is the brighter green
+
+Within the core sites, blocks are colored light to dark as block # increases
+
+Adaptive sites are denoted with a crosshatch pattern, prescriptive sites have none
+
+```{r set colors}
+cols <- cbind(c("CR","MI","RR","WY"),c("#40442D","#3E8AD5", "#7F8954","#D8B712"))
+row.names(cols) <- cols[,1]
+
+pals <- list()
+pals[['MI']] <-  c("#79BAF2","#3E8AD5", "#205291")
+pals[['CR']] <- c("#797D40","#4B4B17","#232400")  
+pals[['RR']] <- c("#969E55","#666D27","#353E00")
+pals[['WY']] <- c("#F2DDA4","#F0DB6E","#D8B712","#B59655","#705300")
+
+```

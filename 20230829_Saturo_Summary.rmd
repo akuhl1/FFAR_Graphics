@@ -1,0 +1,268 @@
+---
+title: "Saturo Data Summary"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warnings = FALSE)
+```
+
+```{r Load Libraries, echo = FALSE, warning = FALSE}
+library(ggplot2)
+library(ggpattern)
+library(reshape2)
+library(dplyr)
+library(lubridate)
+library(ggpubr)
+library(tidytext)
+library(readxl)
+```
+
+### Introduction
+This is a notebook to begin to investigate the recalculated saturo data for the FFAR project
+
+### Data
+Load all of the spreadsheet information and clean up known issues
+
+```{r Load Raw Saturo Files, echo = FALSE, warning = FALSE}
+path2dir <- "C:\\Users\\kuhlalex\\OneDrive - Michigan State University\\Water Cycling Indicators\\Data\\Infiltration Data\\"
+file <- 'Infiltration_recalculated_csv.csv'
+
+sat_dat <- read.csv(paste0(path2dir,'\\',file))
+
+```
+
+```{r parse Saturo data columns, echo = FALSE, warning = FALSE}
+sat_dat <- sat_dat[!is.na(sat_dat$Year),]
+sat_dat$FileName <- gsub("0K", "OK", sat_dat$FileName) # Drop 22 from filename
+
+sat_dat$FileName <- gsub("22-", "", sat_dat$FileName) # Drop 22 from filename
+sat_dat$FileName <- gsub("23-", "", sat_dat$FileName) # Drop 22 from filename
+sat_dat$FileName <- gsub("_", "", sat_dat$FileName) # Drop _ 23 from filename
+sat_dat$FileName <- gsub("OK-CR", "CR", sat_dat$FileName) # Drop _ 23 from filename
+sat_dat$FileName <- gsub("OK-RR", "RR", sat_dat$FileName) # Drop _ 23 from filename
+
+sat_dat$FileName <- gsub("SP-", "", sat_dat$FileName) 
+sat_dat$FileName <- gsub("FL-", "", sat_dat$FileName) 
+
+sat_dat$Site2 <- sapply(strsplit(sat_dat$FileName, "[_|-]"), "[[", 1)
+sat_dat$Treatment <- sapply(strsplit(sat_dat$FileName, "[_|-]"), "[[", 2)
+sat_dat$Block <- sapply(strsplit(sat_dat$FileName, "[.| |_|-]"), "[[", 3)
+sat_dat$Region <- sat_dat$Site2
+sat_dat$Region[sat_dat$Site2 == 'RR' | sat_dat$Site2 == 'CR'] <- 'OK'
+
+
+# if site was WY in 2022 you need to flip the treatment and block labels
+bl_tmp <- sat_dat[sat_dat$Site == "WY" & sat_dat$Year == '2022', "Block"]
+sat_dat[sat_dat$Site == "WY" & sat_dat$Year == '2022', "Block"] <- sat_dat[sat_dat$Site == "WY" & sat_dat$Year == '2022', "Treatment"]
+sat_dat[sat_dat$Site == "WY" & sat_dat$Year == '2022', "Treatment"] <- bl_tmp
+sat_dat$Block <- gsub("R", "", sat_dat$Block) 
+sat_dat[sat_dat$Site == "MI" & sat_dat$Year == '2023' & sat_dat$Treatment == 'R', "Treatment"] <- 'PR'
+
+sat_dat$Triangle <- NA
+sat_dat[sat_dat$Treatment == 'PR' | sat_dat$Treatment == 'AD', 'Triangle'] <- sapply(strsplit(sat_dat[sat_dat$Treatment == 'PR' | sat_dat$Treatment == 'AD', 'FileName'], "[ |.|(|)|_|-]"), "[[", 4)
+sat_dat[!(sat_dat$Treatment == 'PR' | sat_dat$Treatment == 'AD'), 'Triangle'] <- sapply(strsplit(sat_dat[!(sat_dat$Treatment == 'PR' | sat_dat$Treatment == 'AD'), 'FileName'], "[ |.|(|)|_|-]"), "[[", 3)
+sat_dat$Triangle <- gsub("R", "", sat_dat$Triangle) 
+
+sat_dat$Type <- 'Core'
+sat_dat[!(sat_dat$Treatment == 'PR' | sat_dat$Treatment == 'AD'), 'Type'] <- 'Producer'
+
+
+sat_dat[sat_dat$Type == 'Producer', 'Block'] <- sat_dat[sat_dat$Type == 'Producer', 'Treatment']
+
+```
+
+
+```{r Clean up bad data stretches, echo = FALSE, warning = FALSE}
+sat_dat_clean <- sat_dat
+# sat_dat_clean <- subset(sat_dat_clean, !(SerialNumber == 'SAT00002868' & (Year == "2022" | Year == "2023")))
+
+# sat_dat_clean <- subset(sat_dat_clean, !(FileName == "WY-PR-14-12 (2).xlsx" | FileName == "WY-PR-14-12 (3).xlsx"))
+# sat_dat_clean <- subset(sat_dat_clean, !(FileName == "MI-PR-8-11 (2).xlsx" | FileName == "MI-PR-8-11.xlsx"))
+
+# sat_dat_clean <- subset(sat_dat_clean, !(FileName == "MI-PR-8-2 (1).xlsx"))
+# sat_dat_clean <- subset(sat_dat_clean, !(FileName == "RR-AD-6-6 (2).xlsx"))
+
+# remove -999
+sat_dat_clean <- subset(sat_dat_clean, Ksat_cm_min > -999)
+sat_dat_clean$Ksat_in_hr <- sat_dat_clean$Ksat_cm_min*23.622
+
+sat_dat_clean$name <- paste0(sat_dat_clean$Site2,'_',sat_dat_clean$Treatment)
+sat_dat_clean$fullname <- paste0(sat_dat_clean$Site2,'_',sat_dat_clean$Treatment,'_',sat_dat_clean$Block,'_',sat_dat_clean$Triangle)
+sat_dat_clean$time <- paste0(sat_dat_clean$Season,' ',sat_dat_clean$Year)
+sat_dat_clean$time2 <- factor(sat_dat_clean$time, c('Spring 2022','Fall 2022','Spring 2023','Fall 2023'))
+
+sat_dat_clean$exp <- paste0(sat_dat_clean$Type,'_',sat_dat_clean$time2)
+sat_dat_clean$exp <- factor(sat_dat_clean$exp,c("Core_Spring 2022", "Core_Fall 2022","Producer_Spring 2023",
+        "Producer_Fall 2023","Core_Spring 2023","Core_Fall 2023"))
+# remove duplicates
+# sat_dat_clean <- distinct(sat_dat_clean,fullname,time2,Ksat_in_hr, .keep_all = TRUE)
+
+```
+
+```{r view data, echo = FALSE, warning = FALSE}
+head(sat_dat_clean)
+```
+
+```{r Plot boxplot of all Core data, echo = FALSE, warning = FALSE, fig.width=10,fig.height=5}
+
+p3 <- ggplot(data = sat_dat_clean[sat_dat_clean$Type == 'Core',], aes(x = interaction(Treatment,Site2), y = Ksat_in_hr)) +
+      geom_boxplot() +  
+      geom_boxplot_pattern(aes(pattern = Treatment, fill = Site2), show.legend = FALSE, # <- make this an interaction
+          #  colour = "black",
+      pattern_fill = "black",
+      pattern_angle = 20,
+      pattern_density = 0.01,
+      pattern_spacing = 0.04) +
+      scale_pattern_manual(values=c('crosshatch','none')) +
+    #   stat_summary(fun.data = give.n, geom = "text") +
+      xlab("Site") + ylab("Ksat (in/hr)") + ggtitle("All Core Site Measurements by Treatment (n=81+)") +
+      theme_bw(base_size = 16) + 
+      theme(axis.text.x=element_text(angle=45,hjust=1)) #+ facet_wrap(~treatment, nrow=1)
+p3 + scale_fill_discrete(name = "Intensive Site") + scale_fill_manual(values = c("#40442D","#3E8AD5", "#7F8954","#D8B712"))
+
+```
+
+```{r Plot boxplot of KFS data for core & producer sites merged, echo = FALSE, warning = FALSE, fig.width=10,fig.height=5}
+sat_dat_stats <- sat_dat_clean[sat_dat_clean$Year == '2023',] %>% dplyr::group_by(name, Site2, Region, time2,exp) %>% 
+               dplyr::summarize(avg = mean(Ksat_in_hr, na.rm =TRUE), st_dev = sd(Ksat_in_hr, na.rm = TRUE), vari = var(Ksat_in_hr, na.rm = TRUE))
+
+
+cols = cbind(c("MI","WY","OK"),c("#3E8AD5", "#D8B712", "#7F8954"))
+row.names(cols) = cols[,1]
+
+for (reg in unique(sat_dat_clean$Region[sat_dat_clean$Type == 'Producer'])){
+    p3 <- ggplot(data = sat_dat_clean[sat_dat_clean$Year == '2023' & sat_dat_clean$Region == reg,], 
+            aes(reorder(interaction(name,time2),Ksat_in_hr), Ksat_in_hr)) +
+        geom_boxplot() +
+        geom_boxplot_pattern(aes(pattern = exp), show.legend = FALSE, fill = cols[reg,2], # <- make this an interaction
+          #  colour = "black",
+        pattern_fill = "black",
+        pattern_angle = 45,
+        pattern_density = 0.01,
+        pattern_spacing = 0.04) +
+        scale_pattern_manual(values=c('none','circle','stripe')) +   
+        xlab("Producer #") + ylab("Ksat (in/hr)") + ggtitle(paste0(reg, ' Producer & Core sites all triangles combined')) +
+        theme_bw(base_size = 14) +
+        theme(axis.text.x=element_text(angle=45,hjust=1)) #+ facet_wrap(~Treatment, ncol = 2)
+    print(p3) #+ scale_fill_discrete(name = "Experiment")
+
+    p4 <- ggplot(data = sat_dat_stats[sat_dat_stats$Region == reg,], aes(reorder(interaction(name,time2), avg), vari)) +
+        geom_col() +
+        geom_col_pattern(aes(pattern = exp), show.legend = FALSE, fill = cols[reg,2],#"#3E8AD5", # <- make this an interaction
+        colour = "black",
+        pattern_fill = "black",
+        pattern_angle = 45,
+        pattern_density = 0.01,
+        pattern_spacing = 0.04) +
+        scale_pattern_manual(values=c('none','circle','stripe')) +  
+        xlab("Producer #") + ylab("Variance") + ggtitle(paste0(reg, ' Producer & Core sites all triangles combined')) +
+        theme_bw(base_size = 14) +
+        theme(axis.text.x=element_text(angle=45,hjust=1)) #+ facet_wrap(~Treatment, ncol = 2)
+    print(p4)# + scale_fill_discrete(name = "Block"))
+}
+```
+```{r Plot boxplot of all data by season and treatment, echo = FALSE, warning = FALSE, fig.width=10,fig.height=7}
+# p3 <- ggplot(data = sat_dat_clean[sat_dat_clean$Type == 'Core',], aes(x = interaction(Treatment,Site2), y = Ksat_in_hr)) +
+#       geom_boxplot() +  
+#       geom_boxplot_pattern(aes(pattern = Treatment, fill = Site2), # <- make this an interaction
+#           #  colour = "black",
+#       pattern_fill = "black",
+#       pattern_angle = 0,
+#       pattern_density = 0.02,
+#       pattern_spacing = 0.02) +
+#       scale_pattern_manual(values=c('crosshatch','circle')) +
+#     #   stat_summary(fun.data = give.n, geom = "text") +
+#       xlab("Site") + ylab("Ksat (in/hr)") + ggtitle("All Core Site Measurements by Season & Treatment (n=27+)") +
+#       theme_bw(base_size = 16)  + 
+#       theme(axis.text.x=element_text(angle=45,hjust=1)) + facet_wrap(~time2, nrow=1)
+# p3 + scale_fill_discrete(name = "Intensive Site") 
+
+```
+
+```{r Plot boxplot of each triangle, echo = FALSE, warning = FALSE, fig.width=15,fig.height=10}
+
+# give.n <- function(x){
+#    return(c(y = median(x) + 1, label = length(x)))
+# }
+# for (site in unique(sat_dat_clean$Site2)){
+#     p3 <- ggplot(data = sat_dat_clean[sat_dat_clean$Type == 'Core' & sat_dat_clean$Site2 == site,], aes(x = interaction(Triangle,Block,Treatment), y = Ksat_in_hr, fill = Block)) +
+#       geom_boxplot() +  
+#       geom_boxplot_pattern(aes(pattern = Treatment, fill = Block), # <- make this an interaction
+#           #  colour = "black",
+#       pattern_fill = "black",
+#       pattern_angle = 0,
+#       pattern_density = 0.02,
+#       pattern_spacing = 0.02) +
+#       scale_pattern_manual(values=c('crosshatch','circle')) +
+#         #   stat_summary(fun.data = give.n, geom = "text") +
+#         xlab("Site") + ylab("Ksat in/hr") + ggtitle(paste0(site, ' all seasons (n=3)')) +
+#         theme_bw(base_size = 16) +
+#         theme(axis.text.x=element_text(angle=45,hjust=1)) + facet_wrap(~time2, nrow = 1)
+#     print(p3 + scale_fill_discrete(name = "Block")) 
+# }
+```
+
+```{r Plot boxplots of KFS data Core sites, echo = FALSE, warning = FALSE, fig.width=10,fig.height=4}
+
+# for (site in unique(sat_dat_clean$Site2)){
+#     for (block in unique(sat_dat_clean$Block[sat_dat_clean$Site2 == site & sat_dat_clean$Type == 'Core'])){
+#         p3 <- ggplot(data =sat_dat_clean[sat_dat_clean$Type == 'Core' & sat_dat_clean$Site2 == site & sat_dat_clean$Block == block,], aes(x =Triangle, y = Ksat_in_hr, fill = time2)) +
+#             geom_boxplot() +      
+#             geom_boxplot_pattern(aes(pattern = Treatment, fill = time2), # <- make this an interaction
+#             #  colour = "black",
+#         pattern_fill = "black",
+#         pattern_angle = 0,
+#         pattern_density = 0.02,
+#         pattern_spacing = 0.02) +
+#         scale_pattern_manual(values=c('crosshatch','circle')) +
+#             xlab("Triangle") + ylab("Ksat(in/hr)") +
+#             theme_bw(base_size = 14) + ggtitle(paste0(site, ' Block ',block)) +
+#             theme(axis.text.x=element_text(angle=45,hjust=1)) + scale_fill_discrete(name = "Season and year") +
+#             facet_wrap(~Treatment, ncol = 2, scales = "free_x")
+#         print(p3)
+# }
+# }
+```
+
+```{r Plot boxplot of KFS data and variance of all Producer site, echo = FALSE, warning = FALSE, fig.width=10,fig.height=5}
+sat_dat_stats <- sat_dat_clean[sat_dat_clean$Type == 'Producer',] %>% dplyr::group_by(Site2, Block) %>% 
+               dplyr::summarize(avg = mean(Ksat_in_hr, na.rm =TRUE), st_dev = sd(Ksat_in_hr, na.rm = TRUE), vari = var(Ksat_in_hr, na.rm = TRUE))
+
+
+for (site in unique(sat_dat_clean$Site2[sat_dat_clean$Type == 'Producer'])){
+    p3 <- ggplot(data = sat_dat_clean[sat_dat_clean$Type == 'Producer' & sat_dat_clean$Site2 == site,], aes(reorder(Block,Ksat_in_hr), Ksat_in_hr)) +
+        geom_boxplot(fill = cols[site,2]) +
+        #   stat_summary(fun.data = give.n, geom = "text") +
+        xlab("Producer #") + ylab("Ksat (in/hr)") + ggtitle(paste0(site, ' Producer all triangles combined (n=9)')) +
+        theme_bw(base_size = 14) + 
+        theme(axis.text.x=element_text(angle=45,hjust=1)) #+ facet_wrap(~Treatment, ncol = 2)
+    print(p3) 
+
+    p4 <- ggplot(data = sat_dat_stats[sat_dat_stats$Site2 == site,], aes(reorder(Block,avg), vari)) +
+        geom_col(fill = cols[site,2], color= 'Black') +
+        #   stat_summary(fun.data = give.n, geom = "text") +
+        xlab("Producer #") + ylab("Variance") + ggtitle(paste0(site, ' Producer all triangles combined (n=9)')) +
+        theme_bw(base_size = 14) +
+        theme(axis.text.x=element_text(angle=45,hjust=1)) #+ facet_wrap(~Treatment, ncol = 2)
+    print(p4) 
+}
+```
+
+
+```{r Plot boxplots of KFS data of each individual Producer site, echo = FALSE, warning = FALSE, fig.width=10,fig.height=15}
+
+for (site in unique(sat_dat_clean$Site2[sat_dat_clean$Type == 'Producer'])){
+        p3 <- ggplot(data = subset(sat_dat_clean, Site2 == site & Type == 'Producer'), aes(x = Triangle, y = Ksat_in_hr, fill = Block)) +
+        geom_boxplot(fill = cols[site,2]) +
+        xlab("Triangle #") + ylab("Ksat (in/hr)") +
+        theme_bw(base_size = 14) + ggtitle(paste0(site, " Producer each individual triangle (n=3)")) +
+        theme(axis.text.x=element_text(angle=45,hjust=1))  +
+        facet_wrap(~Block, ncol = 2, scale = "free_x")
+        print(p3)
+}
+
+```
+
+
+
